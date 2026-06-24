@@ -1,13 +1,870 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vite + React + TS</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HANGMAN — Dreamed in Stars</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Marcellus&family=Sora:wght@200;300;400&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#06080f; overflow:hidden; width:100vw; height:100vh; }
+  canvas { display:block; position:fixed; inset:0; }
+
+  /* Vignette + grain */
+  #veil {
+    position:fixed; inset:0; z-index:2; pointer-events:none;
+    background:radial-gradient(ellipse at 50% 50%, transparent 35%, rgba(6,8,15,.65) 100%);
+  }
+  #veil::after {
+    content:""; position:absolute; inset:0; opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* Thin HUD layer — ONLY for score + brand, nothing else */
+  #hud {
+    position:fixed; top:0; left:0; right:0; z-index:10;
+    display:flex; justify-content:space-between; align-items:center;
+    padding:20px clamp(18px,3.5vw,48px);
+    pointer-events:none;
+  }
+  .brand {
+    font-family:'Marcellus',serif; font-size:15px;
+    letter-spacing:.5em; color:#e8c06a;
+    text-shadow:0 0 20px rgba(232,192,106,.4);
+  }
+  .brand i { font-style:normal; color:#5fe3c8; }
+  .scores {
+    font-family:'Sora',sans-serif; font-size:10px;
+    letter-spacing:.4em; color:rgba(240,234,221,.4);
+    display:flex; gap:24px;
+  }
+  .scores b { font-family:'Marcellus',serif; font-size:15px; font-weight:400; color:#e8c06a; }
+
+  /* Category / hint strip — just below centre, very subtle */
+  #strip {
+    position:fixed; bottom:clamp(14px,3vh,28px); left:50%;
+    transform:translateX(-50%); z-index:10;
+    text-align:center; pointer-events:none;
+  }
+  #cat-label {
+    font-family:'Sora',sans-serif; font-size:9px;
+    letter-spacing:.6em; text-transform:uppercase;
+    color:#5fe3c8; opacity:.7;
+  }
+  #hint-line {
+    font-family:'Sora',sans-serif; font-size:10px;
+    letter-spacing:.18em; color:#8a6cd9;
+    margin-top:5px; min-height:14px;
+    opacity:0; transition:opacity .6s;
+  }
+  #hint-line.show { opacity:1; }
+
+  /* Overlay — win/lose */
+  #overlay {
+    position:fixed; inset:0; z-index:30;
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:16px;
+    opacity:0; visibility:hidden;
+    transition:opacity .7s;
+    background:radial-gradient(ellipse at 50% 50%,rgba(6,8,15,.5) 0%,rgba(6,8,15,.92) 100%);
+  }
+  #overlay.show { opacity:1; visibility:visible; }
+  #ov-sub { font-family:'Sora',sans-serif; font-size:9px; letter-spacing:.7em; text-transform:uppercase; color:#5fe3c8; }
+  #ov-title { font-family:'Marcellus',serif; font-size:clamp(58px,11vw,130px); line-height:.9; text-align:center; }
+  #ov-title.win  { color:#e8c06a; text-shadow:0 0 60px rgba(232,192,106,.5); }
+  #ov-title.lose { color:#ff8e6e; text-shadow:0 0 60px rgba(255,142,110,.5); }
+  #ov-word { font-family:'Marcellus',serif; font-size:clamp(16px,2.2vw,24px); color:rgba(240,234,221,.7); letter-spacing:.25em; }
+  #ov-stat { font-family:'Sora',sans-serif; font-size:10px; letter-spacing:.35em; color:rgba(240,234,221,.35); }
+  #ov-btn {
+    margin-top:10px; font-family:'Sora',sans-serif; font-size:10px;
+    letter-spacing:.5em; text-transform:uppercase;
+    color:#06080f; background:linear-gradient(120deg,#e8c06a,#5fe3c8);
+    border:none; border-radius:999px; padding:15px 44px;
+    cursor:pointer; pointer-events:auto;
+    box-shadow:0 0 40px rgba(95,227,200,.3);
+    transition:transform .3s, box-shadow .3s;
+  }
+  #ov-btn:hover { transform:translateY(-3px); box-shadow:0 0 70px rgba(95,227,200,.55); }
+
+  @media(prefers-reduced-motion:reduce){ *, *::before, *::after { transition-duration:.01ms !important; } }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="veil"></div>
+
+<div id="hud">
+  <div class="brand">HANG<i>MAN</i></div>
+  <div class="scores">
+    <span>Won <b id="sw">0</b></span>
+    <span>Lost <b id="sl">0</b></span>
+  </div>
+</div>
+
+<div id="strip">
+  <div id="cat-label"></div>
+  <div id="hint-line"></div>
+</div>
+
+<div id="overlay">
+  <div id="ov-sub"></div>
+  <div id="ov-title"></div>
+  <div id="ov-word"></div>
+  <div id="ov-stat"></div>
+  <button id="ov-btn" onclick="newGame()">Play Again</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* ═══════════════════════════════════════════════════════════
+   FULL 3D HANGMAN
+   Everything — gallows, body parts, letter tiles, keyboard
+   tiles — lives inside the Three.js scene.
+   The UI layer only carries brand + score + category.
+═══════════════════════════════════════════════════════════ */
+
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:false});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x06080f, 0.018);
+
+const camera = new THREE.PerspectiveCamera(52, innerWidth/innerHeight, 0.1, 300);
+camera.position.set(0, 1, 22);
+camera.lookAt(0, 0, 0);
+
+/* ── RESIZE ── */
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+});
+
+/* ════════════════════════════════════════════
+   ENVIRONMENT
+════════════════════════════════════════════ */
+
+/* Sky dome */
+scene.add(new THREE.Mesh(
+  new THREE.SphereGeometry(200, 22, 16),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false,
+    uniforms: {
+      top: {value: new THREE.Color(0x010306)},
+      mid: {value: new THREE.Color(0x0a1020)},
+      bot: {value: new THREE.Color(0x1e0d38)}
+    },
+    vertexShader:`varying vec3 vP;void main(){vP=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+    fragmentShader:`varying vec3 vP;uniform vec3 top,mid,bot;void main(){float h=normalize(vP).y;vec3 c=h>0.1?mix(mid,top,smoothstep(.1,.7,h)):mix(bot,mid,smoothstep(-.05,.1,h));gl_FragColor=vec4(c,1.);}`
+  })
+));
+
+/* Lights */
+scene.add(new THREE.AmbientLight(0x1a2040, 1.4));
+const moonLight = new THREE.DirectionalLight(0xffc9a0, 1.0);
+moonLight.position.set(-8, 20, -40); scene.add(moonLight);
+const tealLight = new THREE.DirectionalLight(0x3fd8c4, 0.5);
+tealLight.position.set(14, 8, 10); scene.add(tealLight);
+
+/* Moon */
+const moonGroup = new THREE.Group();
+{
+  const core = new THREE.Mesh(new THREE.SphereGeometry(9,32,32),
+    new THREE.MeshBasicMaterial({color:0xffb075}));
+  moonGroup.add(core);
+  for(let i=1;i<=3;i++){
+    const h=new THREE.Mesh(new THREE.SphereGeometry(9+i*3,28,28),
+      new THREE.MeshBasicMaterial({color:0xff8e6e,transparent:true,opacity:0.07/i,depthWrite:false}));
+    moonGroup.add(h);
+  }
+  moonGroup.position.set(28, 22, -90);
+}
+scene.add(moonGroup);
+
+/* Stars */
+{
+  const n=900, p=new Float32Array(n*3);
+  for(let i=0;i<n;i++){
+    const r=100+Math.random()*80, t=Math.random()*Math.PI*2, ph=Math.acos(2*Math.random()-1)*.55;
+    p[i*3]=r*Math.sin(ph)*Math.cos(t); p[i*3+1]=Math.abs(r*Math.cos(ph))+4; p[i*3+2]=r*Math.sin(ph)*Math.sin(t);
+  }
+  const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(p,3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({color:0xfff2d8,size:0.65,transparent:true,opacity:.8})));
+}
+
+/* Floating islands in background */
+const islands = [];
+function mkIsland(x,y,z,s){
+  const grp = new THREE.Group();
+  const rock = new THREE.Mesh(new THREE.ConeGeometry(s,s*1.5,7),
+    new THREE.MeshLambertMaterial({color:0x3e2558,emissive:0x1a0a2a,emissiveIntensity:.3}));
+  rock.rotation.x=Math.PI; rock.position.y=-s*.75; grp.add(rock);
+  const top = new THREE.Mesh(new THREE.CylinderGeometry(s,s*.92,s*.22,7),
+    new THREE.MeshLambertMaterial({color:0xc49040,emissive:0x7a4820,emissiveIntensity:.2}));
+  grp.add(top);
+  grp.position.set(x,y,z);
+  grp.userData={baseY:y,phase:Math.random()*Math.PI*2,spin:(Math.random()-.5)*.003};
+  islands.push(grp); scene.add(grp);
+}
+mkIsland(-22,  3, -18, 3.8);
+mkIsland( 24,  5, -22, 2.6);
+mkIsland(-10,  8, -35, 2.0);
+mkIsland( 18, -2, -10, 1.8);
+mkIsland(-30, -1,  -8, 2.2);
+
+/* Fireflies */
+const flies = [];
+{
+  const fg = new THREE.SphereGeometry(.16,5,5);
+  for(let i=0;i<28;i++){
+    const m = new THREE.Mesh(fg, new THREE.MeshBasicMaterial({
+      color: Math.random()<.55 ? 0xffc488 : 0x7df0dc,
+      transparent:true, opacity:.9
+    }));
+    m.position.set((Math.random()*2-1)*38, Math.random()*22, -8+Math.random()*40-30);
+    m.userData = {v:.005+Math.random()*.015, sway:Math.random()*Math.PI*2, blink:Math.random()*Math.PI*2};
+    flies.push(m); scene.add(m);
+  }
+}
+
+/* Mist particles */
+{
+  const n=300, p=new Float32Array(n*3);
+  for(let i=0;i<n;i++){
+    p[i*3]=(Math.random()*2-1)*60; p[i*3+1]=Math.random()*14; p[i*3+2]=-60+Math.random()*80;
+  }
+  const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(p,3));
+  scene.add(new THREE.Points(g,new THREE.PointsMaterial({
+    color:0x6fd8b0,size:.45,transparent:true,opacity:.25,depthWrite:false,blending:THREE.AdditiveBlending
+  })));
+}
+
+/* ════════════════════════════════════════════
+   3D GALLOWS
+   Built from glowing tube/cylinder pieces.
+   Centre of scene, slightly upper-left area.
+════════════════════════════════════════════ */
+const GALLOWS_X = -4.5;
+const GALLOWS_Y = -0.5;
+const galMat = new THREE.MeshLambertMaterial({
+  color:0x5fe3c8, emissive:0x1a6050, emissiveIntensity:.6
+});
+const galGlow = new THREE.MeshBasicMaterial({color:0x5fe3c8, transparent:true, opacity:.18, depthWrite:false});
+
+function galPipe(x1,y1,z1,x2,y2,z2, r=0.06){
+  const dir = new THREE.Vector3(x2-x1,y2-y1,z2-z1);
+  const len = dir.length();
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,8), galMat);
+  m.position.set((x1+x2)/2,(y1+y2)/2,(z1+z2)/2);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir.clone().normalize());
+  scene.add(m);
+  // glow shell
+  const g2 = new THREE.Mesh(new THREE.CylinderGeometry(r*2.4,r*2.4,len,8), galGlow);
+  g2.quaternion.copy(m.quaternion);
+  g2.position.copy(m.position);
+  scene.add(g2);
+}
+
+const gx = GALLOWS_X, gy = GALLOWS_Y;
+// Base
+galPipe(gx-2.4,gy-3.2,0, gx+1.0,gy-3.2,0, 0.07);
+// Vertical post
+galPipe(gx-1.2,gy-3.2,0, gx-1.2,gy+3.8,0, 0.07);
+// Horizontal arm
+galPipe(gx-1.2,gy+3.8,0, gx+1.6,gy+3.8,0, 0.07);
+// Diagonal brace
+galPipe(gx-1.2,gy+2.2,0, gx+0.4,gy+3.8,0, 0.05);
+// Rope
+galPipe(gx+1.6,gy+3.8,0, gx+1.6,gy+2.8,0, 0.03);
+
+/* ════════════════════════════════════════════
+   3D HANGMAN BODY PARTS
+   Each part is a glowing 3D object.
+   They appear with a bloom-like pop animation.
+════════════════════════════════════════════ */
+const personX = GALLOWS_X + 1.6;
+const personY = GALLOWS_Y + 2.6;
+
+const bodyMat = new THREE.MeshLambertMaterial({
+  color:0xff8e6e, emissive:0xcc3300, emissiveIntensity:.5
+});
+const bodyGlowMat = new THREE.MeshBasicMaterial({
+  color:0xff8e6e, transparent:true, opacity:.15, depthWrite:false
+});
+
+const bodyParts = [];
+
+function mkBodyPart(geo, geoGlow, x, y, z, rx=0, ry=0, rz=0){
+  const m = new THREE.Mesh(geo, bodyMat);
+  m.position.set(x,y,z);
+  m.rotation.set(rx,ry,rz);
+  m.scale.setScalar(0);
+  const glow = new THREE.Mesh(geoGlow, bodyGlowMat);
+  glow.position.copy(m.position);
+  glow.rotation.copy(m.rotation);
+  glow.scale.setScalar(0);
+  scene.add(m); scene.add(glow);
+  bodyParts.push({mesh:m, glow, targetScale:1, currentScale:0, visible:false});
+}
+
+// Head
+mkBodyPart(
+  new THREE.SphereGeometry(.52,16,16),
+  new THREE.SphereGeometry(.90,14,14),
+  personX, personY+.02, 0
+);
+// Body
+mkBodyPart(
+  new THREE.CylinderGeometry(.1,.14,1.55,8),
+  new THREE.CylinderGeometry(.22,.28,1.55,8),
+  personX, personY-1.3, 0
+);
+// Left arm
+mkBodyPart(
+  new THREE.CylinderGeometry(.08,.08,1.15,8),
+  new THREE.CylinderGeometry(.18,.18,1.15,8),
+  personX-.62, personY-.85, 0, 0,0,-0.72
+);
+// Right arm
+mkBodyPart(
+  new THREE.CylinderGeometry(.08,.08,1.15,8),
+  new THREE.CylinderGeometry(.18,.18,1.15,8),
+  personX+.62, personY-.85, 0, 0,0,0.72
+);
+// Left leg
+mkBodyPart(
+  new THREE.CylinderGeometry(.09,.09,1.3,8),
+  new THREE.CylinderGeometry(.2,.2,1.3,8),
+  personX-.52, personY-2.42, 0, 0,0,-0.32
+);
+// Right leg
+mkBodyPart(
+  new THREE.CylinderGeometry(.09,.09,1.3,8),
+  new THREE.CylinderGeometry(.2,.2,1.3,8),
+  personX+.52, personY-2.42, 0, 0,0,0.32
+);
+
+/* ════════════════════════════════════════════
+   3D LETTER TILES (word display)
+   Floating glowing panels with canvas-rendered letters.
+   Positioned in the right half of the scene.
+════════════════════════════════════════════ */
+const letterTiles = []; // {mesh, letter, revealed}
+let wordGroup = null;
+
+function makeLetterCanvas(ch, revealed, wrong){
+  const size = 128;
+  const cv2 = document.createElement('canvas');
+  cv2.width = cv2.height = size;
+  const ctx = cv2.getContext('2d');
+
+  // Background
+  if(revealed){
+    const g = ctx.createRadialGradient(64,64,0,64,64,60);
+    g.addColorStop(0,'rgba(232,192,106,0.22)');
+    g.addColorStop(1,'rgba(232,192,106,0.04)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0,0,size,size);
+  } else {
+    ctx.fillStyle = 'rgba(240,234,221,0.04)';
+    ctx.fillRect(0,0,size,size);
+  }
+
+  // Border line at bottom
+  ctx.strokeStyle = revealed ? 'rgba(232,192,106,0.9)' : 'rgba(240,234,221,0.25)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(10,size-8); ctx.lineTo(size-10,size-8);
+  ctx.stroke();
+
+  // Letter
+  if(revealed && ch){
+    ctx.font = 'bold 72px Marcellus, serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#e8c06a';
+    ctx.shadowColor = '#e8c06a';
+    ctx.shadowBlur = 18;
+    ctx.fillText(ch, 64, 56);
+  }
+  return cv2;
+}
+
+function buildWordTiles(word){
+  if(wordGroup){ scene.remove(wordGroup); wordGroup.children.forEach(c=>{ if(c.material){c.material.map&&c.material.map.dispose();c.material.dispose();} }); }
+  letterTiles.length = 0;
+  wordGroup = new THREE.Group();
+
+  const n = word.length;
+  const tileW = 0.78, gap = 0.12;
+  const totalW = n*tileW + (n-1)*gap;
+  const startX = 1.8 - totalW/2 + tileW/2;
+
+  for(let i=0;i<n;i++){
+    const tex = new THREE.CanvasTexture(makeLetterCanvas('', false, false));
+    const mat = new THREE.MeshBasicMaterial({map:tex, transparent:true, side:THREE.DoubleSide, depthWrite:false});
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(tileW, tileW), mat);
+    mesh.position.set(startX + i*(tileW+gap), -0.2, 0);
+    wordGroup.add(mesh);
+    letterTiles.push({mesh, mat, tex, letter:word[i], revealed:false});
+  }
+  scene.add(wordGroup);
+}
+
+function updateLetterTile(i, revealed){
+  const t = letterTiles[i];
+  if(!t) return;
+  t.revealed = revealed;
+  t.tex.image = makeLetterCanvas(revealed ? t.letter : '', revealed, false);
+  t.tex.needsUpdate = true;
+}
+
+function revealAllTiles(){
+  letterTiles.forEach((t,i) => updateLetterTile(i, true));
+}
+
+/* ════════════════════════════════════════════
+   3D KEYBOARD TILES
+   26 glowing panels arranged in 3 rows.
+   Hover glow + click animation.
+════════════════════════════════════════════ */
+const keyTiles = {}; // letter → {mesh, mat, state:'idle'|'correct'|'wrong'}
+
+function makeKeyCanvas(ch, state){
+  const cv2 = document.createElement('canvas');
+  cv2.width = cv2.height = 96;
+  const ctx = cv2.getContext('2d');
+
+  const colors = {
+    idle:    {bg:'rgba(240,234,221,0.07)', border:'rgba(240,234,221,0.22)', text:'rgba(240,234,221,0.85)'},
+    hover:   {bg:'rgba(95,227,200,0.18)',  border:'rgba(95,227,200,0.85)',  text:'#5fe3c8'},
+    correct: {bg:'rgba(232,192,106,0.20)', border:'rgba(232,192,106,0.70)', text:'#e8c06a'},
+    wrong:   {bg:'rgba(255,142,110,0.08)', border:'rgba(255,142,110,0.25)', text:'rgba(255,142,110,0.35)'},
+  };
+  const C = colors[state] || colors.idle;
+
+  // BG
+  ctx.fillStyle = C.bg;
+  ctx.roundRect(4,4,88,88,10);
+  ctx.fill();
+
+  // Border
+  ctx.strokeStyle = C.border;
+  ctx.lineWidth = 2.5;
+  ctx.roundRect(4,4,88,88,10);
+  ctx.stroke();
+
+  // Letter
+  ctx.font = 'bold 44px Sora, sans-serif';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillStyle = C.text;
+  if(state==='correct' || state==='hover'){
+    ctx.shadowColor = C.text; ctx.shadowBlur = 14;
+  }
+  ctx.fillText(ch, 48, 50);
+
+  return cv2;
+}
+
+function buildKeyboard(){
+  // Remove old
+  Object.values(keyTiles).forEach(k=>{
+    scene.remove(k.mesh);
+    k.mat.map&&k.mat.map.dispose(); k.mat.dispose();
+  });
+  Object.keys(keyTiles).forEach(k=>delete keyTiles[k]);
+
+  const rows = ['QWERTYUIOP','ASDFGHJKL','ZXCVBNM'];
+  const tileSize = 0.60, gap = 0.10;
+  const baseY = -2.6, baseZ = 0.0;
+
+  rows.forEach((row, ri)=>{
+    const n = row.length;
+    const totalW = n*tileSize + (n-1)*gap;
+    const startX = -totalW/2 + tileSize/2;
+    const y = baseY - ri*(tileSize+gap+0.04);
+
+    for(let ci=0;ci<n;ci++){
+      const ch = row[ci];
+      const tex = new THREE.CanvasTexture(makeKeyCanvas(ch,'idle'));
+      const mat = new THREE.MeshBasicMaterial({map:tex,transparent:true,side:THREE.DoubleSide,depthWrite:false});
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(tileSize,tileSize),mat);
+      mesh.position.set(startX+ci*(tileSize+gap), y, baseZ);
+      mesh.userData = {letter:ch};
+      scene.add(mesh);
+      keyTiles[ch] = {mesh, mat, tex, state:'idle'};
+    }
+  });
+}
+
+function setKeyState(ch, state){
+  const k = keyTiles[ch];
+  if(!k) return;
+  k.state = state;
+  k.tex.image = makeKeyCanvas(ch, state);
+  k.tex.needsUpdate = true;
+}
+
+/* ════════════════════════════════════════════
+   3D LIVES — glowing orbs top-centre
+════════════════════════════════════════════ */
+const lifeOrbs = [];
+const lifeGroup = new THREE.Group();
+scene.add(lifeGroup);
+
+function buildLives(maxLives){
+  while(lifeGroup.children.length) lifeGroup.remove(lifeGroup.children[0]);
+  lifeOrbs.length = 0;
+  const totalW = (maxLives-1)*.85;
+  for(let i=0;i<maxLives;i++){
+    const core = new THREE.Mesh(
+      new THREE.SphereGeometry(.25,12,12),
+      new THREE.MeshBasicMaterial({color:0xe8c06a})
+    );
+    core.position.x = -totalW/2 + i*.85;
+    const glow = new THREE.Mesh(
+      new THREE.SphereGeometry(.46,10,10),
+      new THREE.MeshBasicMaterial({color:0xe8c06a,transparent:true,opacity:.18,depthWrite:false})
+    );
+    glow.position.copy(core.position);
+    lifeGroup.add(core); lifeGroup.add(glow);
+    lifeOrbs.push({core, glow, alive:true});
+  }
+  lifeGroup.position.set(0, 4.5, 0);
+}
+
+function updateLives(remaining){
+  const lost = lifeOrbs.length - remaining;
+  lifeOrbs.forEach((orb, i)=>{
+    const dead = i >= remaining;
+    orb.core.material.color.set(dead ? 0x2a1a30 : 0xe8c06a);
+    orb.glow.material.opacity = dead ? .04 : .18;
+    orb.alive = !dead;
+  });
+}
+
+/* ════════════════════════════════════════════
+   WRONG LETTER DISPLAY — 3D text burst
+   Wrong guesses appear as red floating letters
+   that drift upward and fade.
+════════════════════════════════════════════ */
+const wrongMeshes = [];
+
+function spawnWrongLetter(ch){
+  const cv2 = document.createElement('canvas');
+  cv2.width=cv2.height=96;
+  const ctx=cv2.getContext('2d');
+  ctx.font='bold 60px Marcellus,serif';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillStyle='#ff8e6e';
+  ctx.shadowColor='#ff8e6e'; ctx.shadowBlur=20;
+  ctx.fillText(ch,48,52);
+  const tex=new THREE.CanvasTexture(cv2);
+  const mesh=new THREE.Mesh(
+    new THREE.PlaneGeometry(.7,.7),
+    new THREE.MeshBasicMaterial({map:tex,transparent:true,depthWrite:false,side:THREE.DoubleSide})
+  );
+  // Spawn near the gallows area, random spread
+  mesh.position.set(
+    GALLOWS_X + (Math.random()*2-1)*2.5,
+    GALLOWS_Y + 1 + Math.random()*2,
+    (Math.random()-.5)*1.5
+  );
+  mesh.userData={vy:.012+Math.random()*.008, life:1.0};
+  scene.add(mesh);
+  wrongMeshes.push(mesh);
+}
+
+/* ════════════════════════════════════════════
+   PARTICLE BURST — on wrong guess
+════════════════════════════════════════════ */
+const particles=[];
+function burst(x,y,z,color){
+  const g=new THREE.SphereGeometry(.08,5,5);
+  const m=new THREE.MeshBasicMaterial({color,transparent:true,opacity:1});
+  for(let i=0;i<14;i++){
+    const p=new THREE.Mesh(g.clone(),m.clone());
+    p.position.set(x,y,z);
+    const theta=Math.random()*Math.PI*2;
+    const phi=Math.random()*Math.PI;
+    const spd=.08+Math.random()*.14;
+    p.userData={
+      vx:Math.sin(phi)*Math.cos(theta)*spd,
+      vy:Math.sin(phi)*Math.sin(theta)*spd,
+      vz:Math.cos(phi)*spd,
+      life:1.0
+    };
+    scene.add(p); particles.push(p);
+  }
+}
+
+/* ════════════════════════════════════════════
+   RAYCASTER — click detection on key tiles
+════════════════════════════════════════════ */
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+let hoveredKey = null;
+
+function getKeyMeshes(){
+  return Object.values(keyTiles).map(k=>k.mesh);
+}
+
+canvas.addEventListener('pointermove', e=>{
+  mouse.x = (e.clientX/innerWidth)*2-1;
+  mouse.y = -(e.clientY/innerHeight)*2+1;
+  raycaster.setFromCamera(mouse,camera);
+  const hits = raycaster.intersectObjects(getKeyMeshes());
+  const prev = hoveredKey;
+  hoveredKey = hits.length ? hits[0].object.userData.letter : null;
+
+  if(prev && prev!==hoveredKey){
+    const k=keyTiles[prev];
+    if(k&&k.state==='idle') setKeyState(prev,'idle');
+  }
+  if(hoveredKey){
+    const k=keyTiles[hoveredKey];
+    if(k&&k.state==='idle'){
+      k.tex.image=makeKeyCanvas(hoveredKey,'hover');
+      k.tex.needsUpdate=true;
+    }
+    canvas.style.cursor='pointer';
+  } else {
+    canvas.style.cursor='default';
+  }
+});
+
+canvas.addEventListener('click', e=>{
+  mouse.x=(e.clientX/innerWidth)*2-1;
+  mouse.y=-(e.clientY/innerHeight)*2+1;
+  raycaster.setFromCamera(mouse,camera);
+  const hits=raycaster.intersectObjects(getKeyMeshes());
+  if(hits.length){
+    const ch=hits[0].object.userData.letter;
+    guess(ch);
+  }
+});
+
+/* ════════════════════════════════════════════
+   GAME DATA
+════════════════════════════════════════════ */
+const WORDS=[
+  {word:'KEYBOARD',  cat:'Technology',   hint:'You type on this every day'},
+  {word:'BROWSER',   cat:'Technology',   hint:'Chrome and Firefox are examples'},
+  {word:'ROUTER',    cat:'Technology',   hint:'Sends internet around the home'},
+  {word:'LAPTOP',    cat:'Technology',   hint:'A portable computer'},
+  {word:'MONITOR',   cat:'Technology',   hint:'The screen on your desk'},
+  {word:'PIXEL',     cat:'Technology',   hint:'Tiny dot making up your screen'},
+  {word:'SERVER',    cat:'Technology',   hint:'A powerful computer serving data'},
+  {word:'MOUNTAIN',  cat:'Nature',       hint:'Higher than a hill'},
+  {word:'GLACIER',   cat:'Nature',       hint:'A slow river of ice'},
+  {word:'MONSOON',   cat:'Nature',       hint:'Pakistan gets heavy rain from this'},
+  {word:'DESERT',    cat:'Nature',       hint:'Sandy and very dry'},
+  {word:'VOLCANO',   cat:'Nature',       hint:'A mountain that erupts'},
+  {word:'HORIZON',   cat:'Nature',       hint:'Where sky meets the land'},
+  {word:'PLANET',    cat:'Space',        hint:'Earth is one of these'},
+  {word:'GALAXY',    cat:'Space',        hint:'The Milky Way is one'},
+  {word:'COMET',     cat:'Space',        hint:'A ball of ice with a glowing tail'},
+  {word:'NEBULA',    cat:'Space',        hint:'A gas cloud in space'},
+  {word:'ECLIPSE',   cat:'Space',        hint:'One body blocking another\'s light'},
+  {word:'METEOR',    cat:'Space',        hint:'A shooting star'},
+  {word:'PAKISTAN',  cat:'Geography',    hint:'Land of the pure'},
+  {word:'ISLAMABAD', cat:'Geography',    hint:'Capital nestled in the Margallas'},
+  {word:'LAHORE',    cat:'Geography',    hint:'City of gardens'},
+  {word:'KARACHI',   cat:'Geography',    hint:'Pakistan\'s largest coastal city'},
+  {word:'SKARDU',    cat:'Geography',    hint:'Gateway to K2'},
+  {word:'HUNZA',     cat:'Geography',    hint:'Valley famous for longevity'},
+  {word:'DUBAI',     cat:'Geography',    hint:'Home of the Burj Khalifa'},
+  {word:'JOURNEY',   cat:'Life',         hint:'A long adventure'},
+  {word:'FREEDOM',   cat:'Life',         hint:'The state of being free'},
+  {word:'COURAGE',   cat:'Life',         hint:'Bravery facing fear'},
+  {word:'SILENCE',   cat:'Life',         hint:'The absence of sound'},
+  {word:'BALANCE',   cat:'Life',         hint:'Equal weight on both sides'},
+  {word:'MOSQUE',    cat:'Architecture', hint:'A Muslim place of worship'},
+  {word:'MINARET',   cat:'Architecture', hint:'Tall tower on a mosque'},
+  {word:'BRIDGE',    cat:'Architecture', hint:'Connects two sides across a gap'},
+  {word:'PALACE',    cat:'Architecture', hint:'Where royalty lives'},
+  {word:'DOME',      cat:'Architecture', hint:'A rounded roof'},
+];
+
+const MAX_LIVES = 5;
+let current=null, guessed=new Set(), wrongCount=0, hintUsed=false;
+let scoreWin=0, scoreLose=0, usedIdx=new Set();
+let gameOver=false;
+
+function pickWord(){
+  if(usedIdx.size>=WORDS.length) usedIdx.clear();
+  let i; do{i=Math.floor(Math.random()*WORDS.length);}while(usedIdx.has(i));
+  usedIdx.add(i); return WORDS[i];
+}
+
+function newGame(){
+  current=pickWord(); guessed=new Set(); wrongCount=0; hintUsed=false; gameOver=false;
+  document.getElementById('overlay').classList.remove('show');
+  document.getElementById('cat-label').textContent=current.cat.toUpperCase();
+  document.getElementById('hint-line').textContent='';
+  document.getElementById('hint-line').classList.remove('show');
+
+  // Reset body parts
+  bodyParts.forEach(p=>{p.visible=false;p.currentScale=0;p.mesh.scale.setScalar(0);p.glow.scale.setScalar(0);});
+
+  buildLives(MAX_LIVES);
+  buildKeyboard();
+  buildWordTiles(current.word);
+
+  // Hint button listener (re-attach)
+  // hint handled via keydown H
+}
+
+function guess(ch){
+  if(gameOver||guessed.has(ch)) return;
+  const k=keyTiles[ch]; if(k&&k.state!=='idle') return;
+  guessed.add(ch);
+
+  if(current.word.includes(ch)){
+    setKeyState(ch,'correct');
+    current.word.split('').forEach((c,i)=>{ if(c===ch) updateLetterTile(i,true); });
+    // Gold burst at each tile position
+    letterTiles.forEach((t,i)=>{ if(t.letter===ch) burst(t.mesh.position.x,-0.2,0,0xe8c06a); });
+    if([...current.word].every(c=>guessed.has(c))) endGame(true);
+  } else {
+    setKeyState(ch,'wrong');
+    wrongCount++;
+    // Show body part
+    if(wrongCount<=bodyParts.length){
+      bodyParts[wrongCount-1].visible=true;
+      bodyParts[wrongCount-1].targetScale=1;
+    }
+    updateLives(MAX_LIVES-wrongCount);
+    spawnWrongLetter(ch);
+    burst(personX,personY,0,0xff8e6e);
+    if(wrongCount>=MAX_LIVES) endGame(false);
+  }
+}
+
+function endGame(won){
+  gameOver=true;
+  if(won){ scoreWin++; document.getElementById('sw').textContent=scoreWin; }
+  else   { scoreLose++; document.getElementById('sl').textContent=scoreLose; revealAllTiles(); }
+
+  setTimeout(()=>{
+    const ov=document.getElementById('overlay');
+    document.getElementById('ov-sub').textContent = won?'You escaped the night':'The stars watched you fall';
+    const t=document.getElementById('ov-title');
+    t.textContent=won?'TRIUMPHANT':'FADED';
+    t.className='overlay-title '+(won?'win':'lose');
+    document.getElementById('ov-word').textContent=won?current.word:'The word was: '+current.word;
+    document.getElementById('ov-stat').textContent=`Won ${scoreWin} · Lost ${scoreLose}`;
+    ov.classList.add('show');
+  }, won?400:800);
+}
+
+/* Keyboard input */
+document.addEventListener('keydown',e=>{
+  const ch=e.key.toUpperCase();
+  if(/^[A-Z]$/.test(ch)&&!gameOver) guess(ch);
+  if(ch==='H'&&!hintUsed&&!gameOver){
+    hintUsed=true;
+    const hl=document.getElementById('hint-line');
+    hl.textContent='✦ '+current.hint;
+    hl.classList.add('show');
+  }
+});
+
+/* ════════════════════════════════════════════
+   RENDER LOOP
+════════════════════════════════════════════ */
+let mx2=0,my2=0;
+addEventListener('pointermove',e=>{mx2=(e.clientX/innerWidth-.5)*2;my2=(e.clientY/innerHeight-.5)*2;},{passive:true});
+
+const clock=new THREE.Clock();
+function tick(){
+  requestAnimationFrame(tick);
+  const t=clock.getElapsedTime(), dt=clock.getDelta ? 0.016 : 0.016;
+
+  // Gentle camera drift
+  camera.position.x = Math.sin(t*.18)*1.2 + mx2*.4;
+  camera.position.y = 1.0 + Math.sin(t*.24)*.35 - my2*.25;
+  camera.lookAt(0, -0.5, 0);
+
+  // Moon breathe
+  moonGroup.children[0].scale.setScalar(1+Math.sin(t*.55)*.012);
+
+  // Islands bob
+  islands.forEach(isl=>{
+    isl.position.y=isl.userData.baseY+Math.sin(t*.5+isl.userData.phase)*1.1;
+    isl.rotation.y+=isl.userData.spin;
+  });
+
+  // Fireflies
+  flies.forEach(f=>{
+    f.position.y+=f.userData.v;
+    f.position.x+=Math.sin(t*.7+f.userData.sway)*.005;
+    f.material.opacity=.4+.5*Math.sin(t*2.4+f.userData.blink);
+    if(f.position.y>28) f.position.y=-1;
+  });
+
+  // Body parts pop in
+  bodyParts.forEach(p=>{
+    if(p.visible && p.currentScale<1){
+      p.currentScale=Math.min(1,p.currentScale+.08);
+      const s=p.currentScale;
+      p.mesh.scale.setScalar(s);
+      p.glow.scale.setScalar(s);
+    }
+  });
+
+  // Life orbs pulse
+  lifeOrbs.forEach((orb,i)=>{
+    if(orb.alive){
+      const pulse=.95+.05*Math.sin(t*2.2+i*.8);
+      orb.core.scale.setScalar(pulse);
+      orb.glow.material.opacity=.14+.06*Math.sin(t*2.2+i*.8);
+    }
+  });
+
+  // Word tiles gentle float
+  if(wordGroup){
+    wordGroup.position.y=Math.sin(t*.4)*.08;
+  }
+
+  // Key tiles subtle wave
+  Object.values(keyTiles).forEach((k,i)=>{
+    k.mesh.position.z=Math.sin(t*.5+i*.22)*.04;
+  });
+
+  // Wrong letters drift + fade
+  for(let i=wrongMeshes.length-1;i>=0;i--){
+    const m=wrongMeshes[i];
+    m.userData.life-=.008;
+    m.position.y+=m.userData.vy;
+    m.material.opacity=Math.max(0,m.userData.life);
+    if(m.userData.life<=0){ scene.remove(m); wrongMeshes.splice(i,1); }
+  }
+
+  // Particles
+  for(let i=particles.length-1;i>=0;i--){
+    const p=particles[i];
+    p.userData.life-=.025;
+    p.position.x+=p.userData.vx;
+    p.position.y+=p.userData.vy;
+    p.position.z+=p.userData.vz;
+    p.userData.vy-=.003; // gravity
+    p.material.opacity=Math.max(0,p.userData.life);
+    if(p.userData.life<=0){ scene.remove(p); particles.splice(i,1); }
+  }
+
+  renderer.render(scene,camera);
+}
+
+/* ── START ── */
+newGame();
+tick();
+</script>
+</body>
 </html>

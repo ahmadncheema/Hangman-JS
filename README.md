@@ -4,7 +4,7 @@
 
 Built with the same emotion-first, cinematic design language as [Miraj](https://github.com/ahmadncheema/Miraj) and [Sohni Dharti](https://github.com/ahmadncheema/Sohni-Dharti). One single HTML file. No frameworks. No build step.
 
-**[▶ Live Demo](https://ahmadncheema.github.io/Hangman/)**
+**[▶ Live Demo](https://ahmadncheema.github.io/Hangman-JS/)**
 
 ![Hangman preview](preview.png)
 
